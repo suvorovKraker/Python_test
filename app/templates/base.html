@@ -1,0 +1,26 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>{% block title %}Parking SPB{% endblock %}</title>
+  <link rel="stylesheet" href="/static/vendor/leaflet/leaflet.css">
+  <link rel="stylesheet" href="/static/css/app.css">
+  {% block head %}{% endblock %}
+</head>
+<body>
+  <div id="page-error" class="page-error hidden"></div>
+  <header class="topbar">
+    <div class="brand">Parking SPB</div>
+    <nav class="nav">
+      {% block nav %}{% endblock %}
+    </nav>
+  </header>
+  <main class="content">
+    {% block content %}{% endblock %}
+  </main>
+  <script src="/static/vendor/leaflet/leaflet.js"></script>
+  <script src="/static/js/auth.js"></script>
+  {% block scripts %}{% endblock %}
+</body>
+</html>

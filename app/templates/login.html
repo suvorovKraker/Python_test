@@ -1,0 +1,19 @@
+{% extends "base.html" %}
+
+{% block title %}Вход — Parking SPB{% endblock %}
+
+{% block content %}
+<form class="auth-form" id="login-form">
+  <h1>Вход</h1>
+  <label>Email<input type="email" name="email" required></label>
+  <label>Пароль<input type="password" name="password" required></label>
+  <button type="submit">Войти</button>
+  <p class="muted">Нет аккаунта? <a href="/register">Регистрация</a></p>
+  <p class="error hidden" id="error"></p>
+</form>
+{% endblock %}
+
+{% block scripts %}
+<script src="/static/js/auth.js"></script>
+<script>setupAuthForm("login");</script>
+{% endblock %}
