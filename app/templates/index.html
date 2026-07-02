@@ -3,35 +3,46 @@
 {% block title %}Карта — Parking SPB{% endblock %}
 
 {% block nav %}
-<a href="/">Карта</a>
 <a href="/admin" id="admin-link" class="hidden">Админка</a>
 <a href="/login" id="login-link">Войти</a>
 <button type="button" id="logout-btn" class="hidden link-btn">Выйти</button>
 {% endblock %}
 
-{% block content %}
-<section class="status-panel" id="status-panel">
-  <div class="toolbar">
-    <div id="map-provider"></div>
-    <button type="button" id="geo-btn" class="success-btn">Включить геолокацию</button>
-    <button type="button" id="paid-btn" class="hidden success-btn">Я оплатил</button>
+{% block sidebar %}
+<nav class="side-nav" id="user-nav">
+  <button type="button" class="side-nav-toggle" aria-label="Меню">☰</button>
+  <div class="side-nav-items">
+    <button type="button" class="side-nav-btn active" data-tab="map"><span class="side-nav-label">🗺️ Карта</span></button>
+    <button type="button" class="side-nav-btn" data-tab="settings"><span class="side-nav-label">⚙️ Настройки</span></button>
   </div>
-  <p id="geo-status">Запросите доступ к геолокации для отслеживания парковки.</p>
-  <p id="session-status" class="muted"></p>
-  <p id="timer-status" class="muted hidden"></p>
+</nav>
+{% endblock %}
+
+{% block content %}
+<section id="tab-map" class="tab-panel active">
+  <div class="status-panel">
+    <div class="toolbar">
+      <button type="button" id="paid-btn" class="hidden success-btn">✓ Я оплатил</button>
+      <button type="button" id="left-btn" class="hidden warn-btn">🚗 Я уехал</button>
+    </div>
+    <div id="timer-big" class="timer-big hidden">00:00</div>
+    <p id="session-status" class="muted"></p>
+  </div>
+  <div id="map" class="map map-tall"></div>
+  <section class="notifications-panel" id="notifications-panel"></section>
 </section>
-<section id="map" class="map"></section>
-<section class="notifications-panel" id="notifications-panel"></section>
+
+<section id="tab-settings" class="tab-panel">
+  <h1>Настройки</h1>
+  <p class="muted">Параметры таймера задаёт администратор. Здесь — ваш профиль.</p>
+  <p id="user-email" class="muted"></p>
+</section>
 {% endblock %}
 
 {% block scripts %}
-<script>
-  window.APP_CONFIG = {
-    center: [{{ city_center_lat }}, {{ city_center_lng }}],
-    zoom: {{ city_zoom }}
-  };
-</script>
+<script>window.APP_CONFIG = { center: [{{ city_center_lat }}, {{ city_center_lng }}], zoom: {{ city_zoom }} };</script>
 <script src="/static/js/map-engine.js"></script>
 <script src="/static/js/geo.js"></script>
 <script src="/static/js/app.js"></script>
+<script>setupCollapsibleNav("user-nav");</script>
 {% endblock %}

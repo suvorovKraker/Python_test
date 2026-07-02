@@ -5,8 +5,14 @@
 {% block content %}
 <form class="auth-form" id="register-form">
   <h1>Регистрация</h1>
-  <label>Email<input type="email" name="email" required></label>
-  <label>Пароль<input type="password" name="password" minlength="6" required></label>
+  <label>Имя<input type="text" name="first_name" required minlength="1" autocomplete="given-name"></label>
+  <label>Фамилия<input type="text" name="last_name" required minlength="1" autocomplete="family-name"></label>
+  <label>Email<input type="email" name="email" required autocomplete="email"></label>
+  <label>Пароль<input type="password" name="password" minlength="6" required autocomplete="new-password"></label>
+  <label class="checkbox-label">
+    <input type="checkbox" name="accept_policy" required>
+    <span>Я согласен с <a href="/privacy" target="_blank">политикой конфиденциальности</a> и сбором данных для работы сервиса</span>
+  </label>
   <button type="submit">Создать аккаунт</button>
   <p class="muted">Уже есть аккаунт? <a href="/login">Войти</a></p>
   <p class="error hidden" id="error"></p>

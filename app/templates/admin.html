@@ -2,100 +2,109 @@
 
 {% block title %}Админка — Parking SPB{% endblock %}
 
-{% block head %}
-<link rel="stylesheet" href="/static/vendor/leaflet/leaflet.draw.css">
-{% endblock %}
+{% block head %}{% endblock %}
 
 {% block nav %}
-<a href="/">Карта</a>
-<a href="/admin">Админка</a>
+<a href="/">👤 Юзер</a>
+{% endblock %}
+
+{% block sidebar %}
+<nav class="side-nav" id="admin-nav">
+  <button type="button" class="side-nav-toggle" aria-label="Меню">☰</button>
+  <div class="side-nav-items">
+    <button type="button" class="side-nav-btn active" data-tab="zones"><span class="side-nav-label">🗺️ Карты</span></button>
+    <button type="button" class="side-nav-btn" data-tab="settings"><span class="side-nav-label">⏱️ Таймер</span></button>
+    <button type="button" class="side-nav-btn" data-tab="users"><span class="side-nav-label">👥 Пользователи</span></button>
+    <button type="button" class="side-nav-btn" data-tab="host"><span class="side-nav-label">📱 Телефон</span></button>
+    <button type="button" class="side-nav-btn" data-tab="prefs"><span class="side-nav-label">⚙️ Настройки</span></button>
+  </div>
+</nav>
 {% endblock %}
 
 {% block content %}
-<div class="admin-layout">
-  <aside class="admin-sidebar">
-    <h2>Админка</h2>
-    <button type="button" class="admin-tab-btn active" data-tab="zones">Карта и зоны</button>
-    <button type="button" class="admin-tab-btn" data-tab="host">Доступ с телефона</button>
-    <button type="button" class="admin-tab-btn" data-tab="settings">Настройки таймера</button>
-    <button type="button" class="admin-tab-btn" data-tab="users">Пользователи</button>
-  </aside>
-
-  <div class="admin-main">
-    <section id="tab-zones" class="admin-tab-panel active">
-      <h1>Карта и зоны</h1>
-      <p class="muted">Найдите улицу, отредактируйте полигон и сохраните зону.</p>
-      <button type="button" id="geo-btn" class="success-btn">Включить геолокацию</button>
-      <p id="geo-status" class="muted"></p>
-      <div class="search-box">
-        <label>Поиск улицы<input type="text" id="street-search" placeholder="Например: Невский проспект" autocomplete="off"></label>
-        <ul id="search-results" class="search-results hidden"></ul>
-      </div>
-      <form id="zone-form" class="zone-form">
-        <label>Название<input type="text" name="name" required placeholder="Например: Невский проспект 1"></label>
-        <label>Описание<textarea name="description" rows="2" placeholder="Необязательно"></textarea></label>
-        <p class="muted hidden" id="draw-hint">Для рисования зон переключите карту на OpenStreetMap или Carto.</p>
-        <div class="toolbar">
-          <div id="map-provider"></div>
-          <button type="button" id="clear-polygon" class="secondary-btn">Очистить полигон</button>
+<section id="tab-zones" class="tab-panel active">
+  <div class="map-layout">
+    <div class="map-column">
+      <div class="map-toolbar">
+        <div class="street-search-inline">
+          <input type="search" id="street-search" placeholder="🔍 Улица или дом…" autocomplete="off">
+          <ul id="search-results" class="search-results hidden"></ul>
         </div>
-        <button type="submit">Сохранить зону</button>
-        <p class="error hidden" id="zone-error"></p>
-      </form>
-      <section id="map" class="map map-admin"></section>
-      <ul id="zones-list" class="zones-list"></ul>
-    </section>
-
-    <section id="tab-host" class="admin-tab-panel">
-      <h1>Доступ с телефона</h1>
-      <div class="network-box" id="network-box">Загрузка...</div>
-      <div class="network-box" id="map-keys-box">Проверка ключей карт...</div>
-    </section>
-
-    <section id="tab-settings" class="admin-tab-panel">
-      <h1>Настройки таймера</h1>
-      <form id="settings-form" class="zone-form">
-        <label>Время парковки (мин)<input type="number" name="parking_timer_minutes" min="1" max="180" required></label>
-        <label>Интервал оповещений (мин)<input type="number" name="notification_interval_minutes" min="1" max="60" required></label>
-        <label>Задержка запуска таймера (сек)<input type="number" name="stop_detection_seconds" min="10" max="600" required></label>
-        <label>Радиус «стою на месте» (м)<input type="number" name="movement_radius_meters" min="5" max="200" step="1" required></label>
-        <button type="submit">Сохранить настройки</button>
-        <p class="error hidden" id="settings-error"></p>
-        <p class="muted hidden" id="settings-ok">Настройки сохранены.</p>
-      </form>
-    </section>
-
-    <section id="tab-users" class="admin-tab-panel">
-      <h1>Пользователи</h1>
-      <p class="muted">Все зарегистрированные аккаунты.</p>
-      <div class="users-table-wrap">
-        <table class="users-table" id="users-table">
-          <thead>
-            <tr>
-              <th>ID</th>
-              <th>Email</th>
-              <th>Роль</th>
-              <th>Активен</th>
-              <th>Регистрация</th>
-            </tr>
-          </thead>
-          <tbody id="users-body"></tbody>
-        </table>
       </div>
-    </section>
+      <div class="draw-toolbar" id="draw-toolbar">
+        <button type="button" id="draw-start-btn" class="draw-btn" title="Нажмите и обведите зону на карте">✏️ Нарисовать зону</button>
+        <button type="button" id="draw-finish-btn" class="draw-btn secondary-btn hidden">✓ Завершить</button>
+        <button type="button" id="clear-polygon" class="draw-btn secondary-btn">🗑 Очистить</button>
+        <button type="button" id="save-zone-btn" class="draw-btn success-btn">💾 Сохранить зону</button>
+      </div>
+      <p class="muted draw-hint-text" id="draw-hint">Нажмите «Нарисовать зону» и обведите участок на карте. Или найдите улицу — контур подставится автоматически.</p>
+      <p class="error hidden" id="zone-error"></p>
+      <div id="map" class="map map-tall"></div>
+    </div>
+    <aside class="zones-sidebar">
+      <div class="zones-tabs">
+        <button type="button" class="zones-tab active" data-folder="active">Включённые</button>
+        <button type="button" class="zones-tab" data-folder="disabled">Выключенные</button>
+      </div>
+      <ul id="zones-list" class="zones-list-compact"></ul>
+    </aside>
+  </div>
+</section>
+
+<section id="tab-settings" class="tab-panel">
+  <h1>Настройки таймера</h1>
+  <form id="settings-form" class="zone-form">
+    <label>Время парковки (мин)<input type="number" name="parking_timer_minutes" min="1" max="180" required></label>
+    <label>Интервал оповещений (сек)<input type="number" name="notification_interval_seconds" min="15" max="3600" step="15" required></label>
+    <p class="muted">15 сек = 0.25 мин, 30 сек = 0.5 мин, 300 сек = 5 мин</p>
+    <label>Задержка запуска (сек)<input type="number" name="stop_detection_seconds" min="10" max="600" required></label>
+    <label>Радиус «стою на месте» (м)<input type="number" name="movement_radius_meters" min="5" max="200" step="1" required></label>
+    <div class="toolbar">
+      <button type="submit">Сохранить</button>
+      <button type="button" id="reset-settings-btn" class="secondary-btn">Сбросить по умолчанию</button>
+    </div>
+    <p class="error hidden" id="settings-error"></p>
+    <p class="muted hidden" id="settings-ok">Сохранено.</p>
+  </form>
+</section>
+
+<section id="tab-users" class="tab-panel">
+  <h1>Пользователи</h1>
+  <div class="users-table-wrap">
+    <table class="users-table">
+      <thead><tr><th>ID</th><th>Имя</th><th>Email</th><th>Роль</th><th>Пароль</th><th>Регистрация</th><th></th></tr></thead>
+      <tbody id="users-body"></tbody>
+    </table>
+  </div>
+</section>
+
+<section id="tab-host" class="tab-panel">
+  <h1>Подключение с телефона</h1>
+  <div class="network-box" id="network-box"></div>
+  <div class="network-box" id="map-keys-box"></div>
+</section>
+
+<section id="tab-prefs" class="tab-panel">
+  <h1>Настройки</h1>
+  <p class="muted">Раздел для будущих параметров интерфейса и интеграций.</p>
+</section>
+
+<div id="name-modal" class="modal hidden">
+  <div class="modal-box name-modal-box">
+    <h3>Название зоны</h3>
+    <input type="text" id="zone-name-input" placeholder="Название улицы">
+    <div class="modal-actions">
+      <button type="button" id="zone-name-ok" class="success-btn">OK</button>
+      <button type="button" id="zone-name-cancel" class="secondary-btn">Отмена</button>
+    </div>
   </div>
 </div>
 {% endblock %}
 
 {% block scripts %}
-<script src="/static/vendor/leaflet/leaflet.draw.js"></script>
-<script>
-  window.ADMIN_CONFIG = {
-    center: [{{ city_center_lat }}, {{ city_center_lng }}],
-    zoom: {{ city_zoom }}
-  };
-</script>
+<script>window.ADMIN_CONFIG = { center: [{{ city_center_lat }}, {{ city_center_lng }}], zoom: {{ city_zoom }} };</script>
 <script src="/static/js/map-engine.js"></script>
 <script src="/static/js/geo.js"></script>
 <script src="/static/js/admin.js"></script>
+<script>setupCollapsibleNav("admin-nav");</script>
 {% endblock %}

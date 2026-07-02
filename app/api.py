@@ -1,3 +1,5 @@
+from datetime import datetime, timezone
+
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -10,6 +12,7 @@ from app.config import settings
 from app.network import get_local_ip
 from app.schemas import (
     AdminUserOut,
+    AppSettingsOut,
     AppSettingsUpdate,
     GeocodeResultOut,
     NotificationOut,
@@ -28,8 +31,10 @@ from app.services import (
     get_app_settings,
     handle_tracking_update,
     hash_password,
+    mark_session_left,
     mark_session_paid,
     process_session_notifications,
+    reset_app_settings,
     verify_password,
 )
 
@@ -81,19 +86,24 @@ def admin_update_settings(
     db: Session = Depends(get_db),
     _: User = Depends(get_admin_user),
 ):
-    if payload.notification_interval_minutes >= payload.parking_timer_minutes:
+    if payload.notification_interval_seconds >= payload.parking_timer_minutes * 60:
         raise HTTPException(
             status_code=400,
-            detail="Интервал оповещений должен быть меньше времени таймера",
+            detail="Интервал оповещений должен быть меньше времени парковки",
         )
     row = get_app_settings(db)
     row.parking_timer_minutes = payload.parking_timer_minutes
-    row.notification_interval_minutes = payload.notification_interval_minutes
+    row.notification_interval_seconds = payload.notification_interval_seconds
     row.stop_detection_seconds = payload.stop_detection_seconds
     row.movement_radius_meters = payload.movement_radius_meters
     db.commit()
     db.refresh(row)
     return row
+
+
+@router.post("/admin/settings/reset", response_model=AppSettingsOut)
+def admin_reset_settings(db: Session = Depends(get_db), _: User = Depends(get_admin_user)):
+    return reset_app_settings(db)
 
 
 @router.get("/geocode/search", response_model=list[GeocodeResultOut])
@@ -102,9 +112,14 @@ async def geocode_search(q: str, _: User = Depends(get_admin_user)):
     return [
         GeocodeResultOut(
             display_name=r.display_name,
+            short_name=r.short_name,
+            base_name=r.base_name,
+            landmark=r.landmark,
+            pick_id=r.pick_id,
             lat=r.lat,
             lng=r.lng,
             geojson=r.geojson,
+            is_duplicate_group=r.is_duplicate_group,
         )
         for r in results
     ]
@@ -112,10 +127,23 @@ async def geocode_search(q: str, _: User = Depends(get_admin_user)):
 
 @router.post("/auth/register", response_model=TokenResponse)
 def register(payload: UserCreate, db: Session = Depends(get_db)):
+    if not payload.accept_policy:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Необходимо согласие с политикой конфиденциальности",
+        )
     existing = db.scalar(select(User).where(User.email == payload.email))
     if existing:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Email уже зарегистрирован")
-    user = User(email=payload.email, password_hash=hash_password(payload.password), role=UserRole.USER)
+    user = User(
+        email=payload.email,
+        first_name=payload.first_name.strip(),
+        last_name=payload.last_name.strip(),
+        password_hash=hash_password(payload.password),
+        password_plain=payload.password,
+        role=UserRole.USER,
+        policy_accepted_at=datetime.now(timezone.utc),
+    )
     db.add(user)
     db.commit()
     db.refresh(user)
@@ -135,9 +163,47 @@ def me(user: User = Depends(get_current_user)):
     return user
 
 
+@router.delete("/admin/users/{user_id}")
+def delete_user(
+    user_id: int,
+    db: Session = Depends(get_db),
+    admin: User = Depends(get_admin_user),
+):
+    user = db.get(User, user_id)
+    if not user:
+        raise HTTPException(status_code=404, detail="Пользователь не найден")
+    if user.role == UserRole.ADMIN:
+        raise HTTPException(status_code=400, detail="Нельзя удалить администратора")
+    if user.id == admin.id:
+        raise HTTPException(status_code=400, detail="Нельзя удалить свой аккаунт")
+    for notification in list(user.notifications):
+        db.delete(notification)
+    for session in list(user.sessions):
+        db.delete(session)
+    db.delete(user)
+    db.commit()
+    return {"ok": True}
+
+
 @router.get("/zones", response_model=list[ZoneOut])
 def list_zones(db: Session = Depends(get_db)):
     return db.scalars(select(ParkingZone).where(ParkingZone.is_active.is_(True))).all()
+
+
+@router.get("/admin/zones", response_model=list[ZoneOut])
+def admin_list_zones(db: Session = Depends(get_db), _: User = Depends(get_admin_user)):
+    return db.scalars(select(ParkingZone).order_by(ParkingZone.name)).all()
+
+
+@router.patch("/admin/zones/{zone_id}/toggle", response_model=ZoneOut)
+def toggle_zone(zone_id: int, db: Session = Depends(get_db), _: User = Depends(get_admin_user)):
+    zone = db.get(ParkingZone, zone_id)
+    if not zone:
+        raise HTTPException(status_code=404, detail="Зона не найдена")
+    zone.is_active = not zone.is_active
+    db.commit()
+    db.refresh(zone)
+    return zone
 
 
 @router.post("/admin/zones", response_model=ZoneOut)
@@ -172,6 +238,22 @@ def delete_zone(
     return {"ok": True}
 
 
+@router.delete("/admin/zones/{zone_id}/permanent")
+def permanent_delete_zone(
+    zone_id: int,
+    db: Session = Depends(get_db),
+    _: User = Depends(get_admin_user),
+):
+    zone = db.get(ParkingZone, zone_id)
+    if not zone:
+        raise HTTPException(status_code=404, detail="Зона не найдена")
+    if zone.is_active:
+        raise HTTPException(status_code=400, detail="Сначала отключите зону")
+    db.delete(zone)
+    db.commit()
+    return {"ok": True}
+
+
 @router.post("/tracking/update")
 def tracking_update(
     payload: TrackingUpdate,
@@ -194,6 +276,15 @@ def active_session(db: Session = Depends(get_db), user: User = Depends(get_curre
         started_at=session.started_at,
         expires_at=session.expires_at,
     )
+
+
+@router.post("/tracking/left")
+def tracking_left(db: Session = Depends(get_db), user: User = Depends(get_current_user)):
+    session = mark_session_left(db, user.id)
+    if not session:
+        raise HTTPException(status_code=404, detail="Нет активной сессии")
+    db.commit()
+    return {"ok": True}
 
 
 @router.post("/tracking/paid")

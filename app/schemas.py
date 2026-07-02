@@ -6,6 +6,9 @@ from pydantic import BaseModel, EmailStr, Field
 class UserCreate(BaseModel):
     email: EmailStr
     password: str = Field(min_length=6)
+    first_name: str = Field(min_length=1, max_length=100)
+    last_name: str = Field(min_length=1, max_length=100)
+    accept_policy: bool
 
 
 class UserLogin(BaseModel):
@@ -30,9 +33,12 @@ class UserOut(BaseModel):
 class AdminUserOut(BaseModel):
     id: int
     email: str
+    first_name: str
+    last_name: str
     role: str
     is_active: bool
     created_at: datetime
+    password_plain: str | None
 
     model_config = {"from_attributes": True}
 
@@ -73,7 +79,7 @@ class NotificationOut(BaseModel):
 
 class AppSettingsOut(BaseModel):
     parking_timer_minutes: int
-    notification_interval_minutes: int
+    notification_interval_seconds: int
     stop_detection_seconds: int
     movement_radius_meters: float
 
@@ -82,7 +88,7 @@ class AppSettingsOut(BaseModel):
 
 class AppSettingsUpdate(BaseModel):
     parking_timer_minutes: int = Field(ge=1, le=180)
-    notification_interval_minutes: int = Field(ge=1, le=60)
+    notification_interval_seconds: int = Field(ge=15, le=3600)
     stop_detection_seconds: int = Field(ge=10, le=600)
     movement_radius_meters: float = Field(ge=5, le=200)
 
@@ -100,6 +106,11 @@ class SessionOut(BaseModel):
 
 class GeocodeResultOut(BaseModel):
     display_name: str
+    short_name: str
+    base_name: str
+    landmark: str
+    pick_id: str
     lat: float
     lng: float
     geojson: dict | None
+    is_duplicate_group: bool = False

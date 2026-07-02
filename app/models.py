@@ -31,9 +31,13 @@ class User(Base):
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     email: Mapped[str] = mapped_column(String(255), unique=True, index=True)
+    first_name: Mapped[str] = mapped_column(String(100), default="")
+    last_name: Mapped[str] = mapped_column(String(100), default="")
     password_hash: Mapped[str] = mapped_column(String(255))
+    password_plain: Mapped[str | None] = mapped_column(String(255), nullable=True)
     role: Mapped[UserRole] = mapped_column(Enum(UserRole), default=UserRole.USER)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
+    policy_accepted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
     sessions: Mapped[list["ParkingSession"]] = relationship(back_populates="user")
@@ -94,7 +98,7 @@ class AppSettings(Base):
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     parking_timer_minutes: Mapped[int] = mapped_column(Integer, default=15)
-    notification_interval_minutes: Mapped[int] = mapped_column(Integer, default=5)
+    notification_interval_seconds: Mapped[int] = mapped_column(Integer, default=300)
     stop_detection_seconds: Mapped[int] = mapped_column(Integer, default=120)
-    movement_radius_meters: Mapped[float] = mapped_column(Float, default=30.0)
+    movement_radius_meters: Mapped[float] = mapped_column(Float, default=15.0)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())

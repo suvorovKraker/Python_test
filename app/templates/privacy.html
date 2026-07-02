@@ -1,0 +1,23 @@
+{% extends "base.html" %}
+
+{% block title %}Политика конфиденциальности — Parking SPB{% endblock %}
+
+{% block content %}
+<article class="policy-page">
+  <h1>Политика конфиденциальности</h1>
+  <div class="policy-content">
+    {% for line in content.split('\n') %}
+      {% if line.startswith('# ') %}
+        <h1>{{ line[2:] }}</h1>
+      {% elif line.startswith('## ') %}
+        <h2>{{ line[3:] }}</h2>
+      {% elif line.startswith('**') and line.endswith('**') %}
+        <p><strong>{{ line.strip('*') }}</strong></p>
+      {% elif line.strip() %}
+        <p>{{ line }}</p>
+      {% endif %}
+    {% endfor %}
+  </div>
+  <p class="muted"><a href="/register">← Назад к регистрации</a></p>
+</article>
+{% endblock %}

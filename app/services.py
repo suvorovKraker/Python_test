@@ -49,7 +49,7 @@ def get_app_settings(db: Session) -> AppSettings:
         row = AppSettings(
             id=1,
             parking_timer_minutes=settings.parking_timer_minutes,
-            notification_interval_minutes=settings.notification_interval_minutes,
+            notification_interval_seconds=settings.notification_interval_seconds,
             stop_detection_seconds=settings.stop_detection_seconds,
             movement_radius_meters=settings.movement_radius_meters,
         )
@@ -157,7 +157,9 @@ def process_session_notifications(
     if started_at.tzinfo is None:
         started_at = started_at.replace(tzinfo=timezone.utc)
 
-    elapsed_minutes = (now - started_at).total_seconds() / 60
+    elapsed_seconds = (now - started_at).total_seconds()
+    timer_seconds = app_settings.parking_timer_minutes * 60
+    interval = app_settings.notification_interval_seconds
     created: list[Notification] = []
     zone_name = session.zone.name if session.zone else "парковка"
 
@@ -167,26 +169,26 @@ def process_session_notifications(
             Notification.type == NotificationType.PAY_REMINDER,
         )
     ).all()
-    sent_milestones = {n.message.split("прошло ")[1].split(" мин")[0] for n in existing_reminders if "прошло " in n.message}
+    sent_milestones = {
+        n.message.split("прошло ")[1].split(" ")[0] for n in existing_reminders if "прошло " in n.message
+    }
 
-    for minutes in range(
-        app_settings.notification_interval_minutes,
-        app_settings.parking_timer_minutes,
-        app_settings.notification_interval_minutes,
-    ):
-        if elapsed_minutes >= minutes and str(minutes) not in sent_milestones:
-            remaining = app_settings.parking_timer_minutes - minutes
+    sec = interval
+    while sec < timer_seconds:
+        if elapsed_seconds >= sec and str(int(sec)) not in sent_milestones:
+            remaining = timer_seconds - sec
             notification = _create_notification(
                 db,
                 session.user_id,
                 session.id,
                 NotificationType.PAY_REMINDER,
                 "Оплатите парковку",
-                f"Зона «{zone_name}»: прошло {minutes} мин. Осталось ~{remaining} мин до окончания бесплатного времени.",
+                f"Зона «{zone_name}»: прошло {sec} сек. Осталось ~{int(remaining)} сек.",
             )
             created.append(notification)
+        sec += interval
 
-    if elapsed_minutes >= app_settings.parking_timer_minutes:
+    if elapsed_seconds >= timer_seconds:
         if not _notification_exists(db, session.id, NotificationType.TIME_EXPIRED):
             notification = _create_notification(
                 db,
@@ -201,6 +203,41 @@ def process_session_notifications(
         session.ended_at = now
 
     return created
+
+
+def mark_session_left(db: Session, user_id: int) -> ParkingSession | None:
+    session = get_active_session(db, user_id)
+    if not session:
+        return None
+    session.status = SessionStatus.CANCELLED
+    session.ended_at = datetime.now(timezone.utc)
+    zone_name = session.zone.name if session.zone else "парковка"
+    _create_notification(
+        db,
+        user_id,
+        session.id,
+        NotificationType.PAYMENT_CONFIRMED,
+        "Вы уехали",
+        f"Таймер в зоне «{zone_name}» остановлен. Уведомления возобновятся после следующей остановки.",
+    )
+    return session
+
+
+DEFAULT_SETTINGS = {
+    "parking_timer_minutes": 15,
+    "notification_interval_seconds": 300,
+    "stop_detection_seconds": 120,
+    "movement_radius_meters": 15.0,
+}
+
+
+def reset_app_settings(db: Session) -> AppSettings:
+    row = get_app_settings(db)
+    for key, value in DEFAULT_SETTINGS.items():
+        setattr(row, key, value)
+    db.commit()
+    db.refresh(row)
+    return row
 
 
 def mark_session_paid(db: Session, user_id: int) -> ParkingSession | None:
@@ -233,7 +270,7 @@ def handle_tracking_update(
             db.commit()
             return {"action": "session_cancelled", "message": "Движение обнаружено, таймер остановлен."}
         db.commit()
-        return {"action": "moving", "message": "Движение — таймер не запускается."}
+        return {"action": "moving", "message": ""}
 
     zone = find_zone_for_point(db, lat, lng)
     if not zone:

@@ -8,17 +8,31 @@
   <link rel="stylesheet" href="/static/css/app.css">
   {% block head %}{% endblock %}
 </head>
-<body>
+<body class="spb-theme">
   <div id="page-error" class="page-error hidden"></div>
   <header class="topbar">
-    <div class="brand">Parking SPB</div>
-    <nav class="nav">
-      {% block nav %}{% endblock %}
-    </nav>
+    <div class="brand-block">
+      <a href="/" class="brand brand-link" id="brand-link">🏛️ Parking SPB</a>
+      <div class="geo-row">
+        <div id="geo-indicator" class="geo-indicator geo-warn">⚠️ геолокация…</div>
+        <button type="button" id="geo-retry-btn" class="geo-retry-btn hidden" title="Переподключить геолокацию">↻</button>
+      </div>
+    </div>
+    <nav class="nav">{% block nav %}{% endblock %}</nav>
   </header>
-  <main class="content">
-    {% block content %}{% endblock %}
-  </main>
+  <div class="page-shell">
+    <main class="content">{% block content %}{% endblock %}</main>
+    {% block sidebar %}{% endblock %}
+  </div>
+  <div id="confirm-modal" class="modal hidden">
+    <div class="modal-box confirm-box">
+      <p id="confirm-message"></p>
+      <div class="modal-actions">
+        <button type="button" id="confirm-yes" class="success-btn">Да</button>
+        <button type="button" id="confirm-no" class="secondary-btn">Отмена</button>
+      </div>
+    </div>
+  </div>
   <script src="/static/vendor/leaflet/leaflet.js"></script>
   <script src="/static/js/auth.js"></script>
   {% block scripts %}{% endblock %}

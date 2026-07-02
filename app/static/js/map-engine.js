@@ -1,30 +1,3 @@
-const LEAFLET_PROVIDERS = {
-  osm: {
-    label: "OpenStreetMap",
-    url: "https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png",
-    attribution: "&copy; OpenStreetMap",
-    maxZoom: 19,
-  },
-  carto: {
-    label: "Carto (светлая)",
-    url: "https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png",
-    attribution: "&copy; OSM, CARTO",
-    maxZoom: 20,
-  },
-  dark: {
-    label: "Carto (тёмная)",
-    url: "https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png",
-    attribution: "&copy; OSM, CARTO",
-    maxZoom: 20,
-  },
-  satellite: {
-    label: "Спутник (Esri)",
-    url: "https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}",
-    attribution: "&copy; Esri",
-    maxZoom: 19,
-  },
-};
-
 function loadScript(src) {
   return new Promise((resolve, reject) => {
     const existing = document.querySelector(`script[src="${src}"]`);
@@ -55,71 +28,39 @@ function geoJsonToYandexCoords(geojson) {
   return [];
 }
 
+const PICK_COLORS = ["#f59e0b", "#8b5cf6", "#06b6d4", "#ec4899", "#84cc16", "#f97316"];
+
 class MapEngine {
   constructor(containerId, center, zoom, mapKeys = {}) {
     this.containerId = containerId;
     this.center = center;
     this.zoom = zoom;
     this.mapKeys = mapKeys;
-    this.engine = "leaflet";
+    this.engine = "yandex";
     this.map = null;
-    this.tileLayer = null;
     this.zoneObjects = [];
     this.userMarker = null;
-    this.drawnItems = null;
-    this.drawControl = null;
+    this.yandexDrawPolygon = null;
+    this.pickableObjects = [];
     this.drawnLayer = null;
     this.onDrawCreated = null;
-    this.onDrawEdited = null;
+    this._drawingActive = false;
+    this._zoneBackup = null;
+    this._userPos = null;
   }
 
-  getProviders() {
-    const providers = { ...LEAFLET_PROVIDERS };
-    if (this.mapKeys.yandex_api_key) {
-      providers.yandex = { label: "Яндекс.Карты", engine: "yandex" };
-    }
-    if (this.mapKeys.dgis_api_key) {
-      providers.dgis = { label: "2ГИС", engine: "dgis" };
-    }
-    return providers;
-  }
-
-  supportsDrawing(providerId) {
-    const providers = this.getProviders();
-    const p = providers[providerId];
-    return !p?.engine || p.engine === "leaflet";
-  }
-
-  async init(providerId = "osm") {
+  async init() {
     const container = document.getElementById(this.containerId);
     if (!container) throw new Error("Контейнер карты не найден");
     container.innerHTML = "";
     this._destroy();
-
-    const providers = this.getProviders();
-    const provider = providers[providerId] || providers.osm;
-    this.engine = provider.engine || "leaflet";
-
-    if (this.engine === "yandex") return this._initYandex(providerId);
-    if (this.engine === "dgis") return this._init2GIS(providerId);
-    return this._initLeaflet(providerId);
+    return this._initYandex();
   }
 
-  async _initLeaflet(providerId) {
-    this.engine = "leaflet";
-    const provider = LEAFLET_PROVIDERS[providerId] || LEAFLET_PROVIDERS.osm;
-    this.map = L.map(this.containerId).setView(this.center, this.zoom);
-    this.tileLayer = L.tileLayer(provider.url, {
-      attribution: provider.attribution,
-      maxZoom: provider.maxZoom,
-    }).addTo(this.map);
-    return this.map;
-  }
-
-  async _initYandex(providerId) {
+  async _initYandex() {
     const key = this.mapKeys.yandex_api_key;
-    if (!key) throw new Error("Нет ключа Яндекс.Карт");
-    await loadScript(`https://api-maps.yandex.ru/2.1/?apikey=${encodeURIComponent(key)}&lang=ru_RU`);
+    if (!key) throw new Error("Нет ключа Яндекс.Карт в .env (YANDEX_MAPS_API_KEY)");
+    await loadScript(`https://api-maps.yandex.ru/2.1/?apikey=${encodeURIComponent(key)}&lang=ru_RU&load=package.full`);
     await new Promise((resolve) => ymaps.ready(resolve));
     this.engine = "yandex";
     this.map = new ymaps.Map(this.containerId, {
@@ -130,40 +71,17 @@ class MapEngine {
     return this.map;
   }
 
-  async _init2GIS(providerId) {
-    const key = this.mapKeys.dgis_api_key;
-    if (!key) throw new Error("Нет ключа 2ГИС");
-    await loadScript(`https://mapgl.2gis.com/api/js/v1?key=${encodeURIComponent(key)}`);
-    this.engine = "dgis";
-    this.map = new mapgl.Map(this.containerId, {
-      key,
-      center: [this.center[1], this.center[0]],
-      zoom: this.zoom,
-    });
-    return this.map;
-  }
-
   _destroy() {
+    this.clearPickableCandidates();
+    this._stopDrawing();
     this.zoneObjects = [];
     this.userMarker = null;
     this.drawnLayer = null;
-    if (this.engine === "leaflet" && this.map) {
-      this.map.remove();
-    } else if (this.engine === "yandex" && this.map) {
+    this.yandexDrawPolygon = null;
+    if (this.map) {
       this.map.destroy();
-    } else if (this.engine === "dgis" && this.map) {
-      this.map.destroy();
+      this.map = null;
     }
-    this.map = null;
-    this.drawControl = null;
-    this.drawnItems = null;
-  }
-
-  async setProvider(providerId) {
-    const zonesBackup = this._zoneBackup;
-    await this.init(providerId);
-    if (zonesBackup) this.renderZones(zonesBackup);
-    if (this._userPos) this.setUserMarker(this._userPos.lat, this._userPos.lng);
   }
 
   renderZones(zones) {
@@ -173,194 +91,185 @@ class MapEngine {
       const geo = typeof zone.polygon_geojson === "string"
         ? JSON.parse(zone.polygon_geojson)
         : zone.polygon_geojson;
-      this.addZone(geo, zone.name);
+      this.addZone(geo, zone.name, zone.is_active !== false);
     });
   }
 
   clearZones() {
-    if (this.engine === "leaflet") {
-      this.zoneObjects.forEach((layer) => this.map.removeLayer(layer));
-    } else if (this.engine === "yandex") {
-      this.zoneObjects.forEach((obj) => this.map.geoObjects.remove(obj));
-    } else if (this.engine === "dgis") {
-      this.zoneObjects.forEach((obj) => obj.destroy());
-    }
+    if (!this.map) return;
+    this.zoneObjects.forEach((obj) => this.map.geoObjects.remove(obj));
     this.zoneObjects = [];
   }
 
-  addZone(geojson, name = "") {
-    if (this.engine === "leaflet") {
-      const layer = L.geoJSON(geojson, {
-        style: { color: "#3b82f6", weight: 2, fillOpacity: 0.2 },
-      }).bindPopup(name);
-      layer.addTo(this.map);
-      this.zoneObjects.push(layer);
-    } else if (this.engine === "yandex") {
-      const coords = geoJsonToYandexCoords(geojson);
-      const polygon = new ymaps.Polygon(coords, { hintContent: name }, {
-        fillColor: "#3b82f688",
-        strokeColor: "#3b82f6",
-        strokeWidth: 2,
+  addZone(geojson, name = "", active = true) {
+    if (!this.map) return;
+    const color = active ? "#ef4444" : "#3b82f6";
+    const fill = active ? "#ef444466" : "#3b82f688";
+    const coords = geoJsonToYandexCoords(geojson);
+    const polygon = new ymaps.Polygon(coords, { hintContent: name, balloonContent: name }, {
+      fillColor: fill,
+      strokeColor: color,
+      strokeWidth: 2,
+    });
+    this.map.geoObjects.add(polygon);
+    this.zoneObjects.push(polygon);
+  }
+
+  clearPickableCandidates() {
+    if (!this.map) return;
+    this.pickableObjects.forEach((obj) => this.map.geoObjects.remove(obj));
+    this.pickableObjects = [];
+  }
+
+  showPickableCandidates(candidates, onPick) {
+    if (!this.map) return;
+    this.clearPickableCandidates();
+    this.clearDrawnPolygon();
+    const allCoords = [];
+    candidates.forEach((candidate, index) => {
+      if (!candidate.geojson) return;
+      const color = PICK_COLORS[index % PICK_COLORS.length];
+      const coords = geoJsonToYandexCoords(candidate.geojson);
+      if (coords.length) allCoords.push(...coords[0]);
+
+      const polygon = new ymaps.Polygon(coords, {
+        balloonContent: candidate.short_name,
+        hintContent: `${index + 1}. ${candidate.short_name}`,
+      }, {
+        fillColor: `${color}88`,
+        strokeColor: color,
+        strokeWidth: 3,
+      });
+      polygon.events.add("click", () => {
+        this.clearPickableCandidates();
+        onPick(candidate);
       });
       this.map.geoObjects.add(polygon);
-      this.zoneObjects.push(polygon);
-    } else if (this.engine === "dgis") {
-      const geom = geojson.type === "Feature" ? geojson.geometry : geojson;
-      const rings = geom.type === "Polygon" ? [geom.coordinates[0]] : geom.coordinates.map((p) => p[0]);
-      rings.forEach((ring) => {
-        const polygon = new mapgl.Polygon(this.map, {
-          coordinates: [ring],
-          color: "#3b82f6",
-          opacity: 0.25,
-        });
-        this.zoneObjects.push(polygon);
+      this.pickableObjects.push(polygon);
+
+      const mark = new ymaps.Placemark([candidate.lat, candidate.lng], {
+        iconContent: String(index + 1),
+      }, { preset: "islands#redCircleIcon" });
+      mark.events.add("click", () => {
+        this.clearPickableCandidates();
+        onPick(candidate);
       });
+      this.map.geoObjects.add(mark);
+      this.pickableObjects.push(mark);
+    });
+
+    if (allCoords.length) {
+      const bounds = ymaps.util.bounds.fromPoints(allCoords);
+      this.map.setBounds(bounds, { checkZoomRange: true, zoomMargin: 40 });
     }
   }
 
   setUserMarker(lat, lng) {
     this._userPos = { lat, lng };
-    if (this.engine === "leaflet") {
-      if (!this.userMarker) {
-        this.userMarker = L.marker([lat, lng]).addTo(this.map).bindPopup("Вы здесь");
-      } else {
-        this.userMarker.setLatLng([lat, lng]);
-      }
-      this.map.setView([lat, lng], Math.max(this.map.getZoom(), 15));
-    } else if (this.engine === "yandex") {
-      if (this.userMarker) this.map.geoObjects.remove(this.userMarker);
-      this.userMarker = new ymaps.Placemark([lat, lng], { iconContent: "Вы" }, {
-        preset: "islands#blueCircleDotIcon",
-      });
-      this.map.geoObjects.add(this.userMarker);
-      this.map.setCenter([lat, lng], 16);
-    } else if (this.engine === "dgis") {
-      if (this.userMarker) this.userMarker.destroy();
-      this.userMarker = new mapgl.Marker(this.map, {
-        coordinates: [lng, lat],
-      });
-      this.map.setCenter([lng, lat]);
-      this.map.setZoom(16);
-    }
+    if (!this.map) return;
+    if (this.userMarker) this.map.geoObjects.remove(this.userMarker);
+    this.userMarker = new ymaps.Placemark([lat, lng], { iconContent: "Вы" }, {
+      preset: "islands#blueCircleDotIcon",
+    });
+    this.map.geoObjects.add(this.userMarker);
+    this.map.setCenter([lat, lng], 16);
   }
 
   fitGeoJson(geojson) {
-    if (this.engine === "leaflet") {
-      const layer = L.geoJSON(geojson);
-      this.map.fitBounds(layer.getBounds(), { padding: [20, 20] });
-    } else if (this.engine === "yandex") {
-      const coords = geoJsonToYandexCoords(geojson);
-      if (coords.length) {
-        const bounds = ymaps.util.bounds.fromPoints(coords[0]);
-        this.map.setBounds(bounds, { checkZoomRange: true, zoomMargin: 30 });
-      }
-    } else if (this.engine === "dgis") {
-      const geom = geojson.type === "Feature" ? geojson.geometry : geojson;
-      const ring = geom.coordinates[0];
-      const lngs = ring.map((c) => c[0]);
-      const lats = ring.map((c) => c[1]);
-      const center = [(Math.min(...lngs) + Math.max(...lngs)) / 2, (Math.min(...lats) + Math.max(...lats)) / 2];
-      this.map.setCenter(center);
-      this.map.setZoom(16);
-    }
-  }
-
-  setView(lat, lng, zoom) {
-    if (this.engine === "leaflet") {
-      this.map.setView([lat, lng], zoom);
-    } else if (this.engine === "yandex") {
-      this.map.setCenter([lat, lng], zoom);
-    } else if (this.engine === "dgis") {
-      this.map.setCenter([lng, lat]);
-      this.map.setZoom(zoom);
+    const coords = geoJsonToYandexCoords(geojson);
+    if (coords.length && this.map) {
+      const bounds = ymaps.util.bounds.fromPoints(coords[0]);
+      this.map.setBounds(bounds, { checkZoomRange: true, zoomMargin: 30 });
     }
   }
 
   enableDrawing() {
-    if (this.engine !== "leaflet") return false;
-    this.drawnItems = new L.FeatureGroup();
-    this.map.addLayer(this.drawnItems);
-    this.drawControl = new L.Control.Draw({
-      draw: {
-        polygon: true,
-        polyline: false,
-        rectangle: true,
-        circle: false,
-        marker: false,
-        circlemarker: false,
-      },
-      edit: { featureGroup: this.drawnItems },
+    return !!this.map;
+  }
+
+  startDrawingMode() {
+    return this._startYandexDrawing();
+  }
+
+  finishDrawingMode() {
+    this._drawingActive = false;
+    if (this.yandexDrawPolygon?.editor) {
+      this.yandexDrawPolygon.editor.stopDrawing();
+    }
+    document.getElementById("draw-finish-btn")?.classList.add("hidden");
+  }
+
+  _stopDrawing() {
+    if (this.yandexDrawPolygon && this.map) {
+      try {
+        this.yandexDrawPolygon.editor?.stopDrawing();
+        this.yandexDrawPolygon.editor?.stopEditing();
+      } catch (_) {}
+      this.map.geoObjects.remove(this.yandexDrawPolygon);
+      this.yandexDrawPolygon = null;
+    }
+    this._drawingActive = false;
+  }
+
+  _yandexToGeoJson(polygon) {
+    if (!polygon?.geometry) return null;
+    const coords = polygon.geometry.getCoordinates();
+    if (!coords?.length || !coords[0]?.length || coords[0].length < 3) return null;
+    const ring = coords[0].map((c) => [c[1], c[0]]);
+    const first = ring[0];
+    const last = ring[ring.length - 1];
+    if (first[0] !== last[0] || first[1] !== last[1]) ring.push([...first]);
+    return { type: "Polygon", coordinates: [ring] };
+  }
+
+  _startYandexDrawing() {
+    if (!this.map) return false;
+    this.clearPickableCandidates();
+    this._stopDrawing();
+    this.yandexDrawPolygon = new ymaps.Polygon([[]], {}, {
+      editorDrawingCursor: "crosshair",
+      fillColor: "rgba(59,130,246,0.35)",
+      strokeColor: "#3b82f6",
+      strokeWidth: 3,
     });
-    this.map.addControl(this.drawControl);
-    this.map.on(L.Draw.Event.CREATED, (event) => {
-      this.drawnItems.clearLayers();
-      this.drawnLayer = event.layer;
-      this.drawnItems.addLayer(this.drawnLayer);
-      if (this.onDrawCreated) this.onDrawCreated(this.drawnLayer);
-    });
-    this.map.on(L.Draw.Event.EDITED, (event) => {
-      event.layers.eachLayer((layer) => {
-        this.drawnLayer = layer;
-        if (this.onDrawEdited) this.onDrawEdited(layer);
-      });
+    this.map.geoObjects.add(this.yandexDrawPolygon);
+    this.yandexDrawPolygon.editor.startDrawing();
+    this.drawnLayer = this.yandexDrawPolygon;
+    this._drawingActive = true;
+    document.getElementById("draw-finish-btn")?.classList.remove("hidden");
+    this.yandexDrawPolygon.geometry.events.add("change", () => {
+      this.drawnLayer = this.yandexDrawPolygon;
+      if (this.onDrawCreated) this.onDrawCreated(this.yandexDrawPolygon);
     });
     return true;
   }
 
   setDrawnPolygon(geojson) {
-    if (this.engine !== "leaflet") return false;
-    if (!this.drawnItems) this.enableDrawing();
-    this.drawnItems.clearLayers();
-    this.drawnLayer = L.geoJSON(geojson).getLayers()[0];
-    if (!this.drawnLayer) return false;
-    this.drawnItems.addLayer(this.drawnLayer);
+    if (!this.map) return false;
+    this.clearPickableCandidates();
+    this._stopDrawing();
+    const coords = geoJsonToYandexCoords(geojson);
+    if (!coords.length) return false;
+    this.yandexDrawPolygon = new ymaps.Polygon(coords, {}, {
+      fillColor: "rgba(59,130,246,0.35)",
+      strokeColor: "#3b82f6",
+      strokeWidth: 3,
+    });
+    this.map.geoObjects.add(this.yandexDrawPolygon);
+    this.drawnLayer = this.yandexDrawPolygon;
     this.fitGeoJson(geojson);
     return true;
   }
 
   clearDrawnPolygon() {
-    if (this.drawnItems) this.drawnItems.clearLayers();
+    this._stopDrawing();
     this.drawnLayer = null;
   }
 
   getDrawnGeoJson() {
-    if (!this.drawnLayer) return null;
-    return this.drawnLayer.toGeoJSON().geometry;
+    if (this.yandexDrawPolygon) return this._yandexToGeoJson(this.yandexDrawPolygon);
+    return null;
   }
-}
-
-function addProviderControl(mapEngine, containerId, onChange) {
-  const container = document.getElementById(containerId);
-  if (!container) return;
-
-  const select = document.createElement("select");
-  select.className = "map-provider-select";
-  const providers = mapEngine.getProviders();
-  Object.entries(providers).forEach(([id, provider]) => {
-    const option = document.createElement("option");
-    option.value = id;
-    option.textContent = provider.label;
-    select.appendChild(option);
-  });
-
-  const saved = localStorage.getItem("parking_map_provider");
-  const initial = saved && providers[saved] ? saved : "osm";
-  select.value = initial;
-
-  select.addEventListener("change", async () => {
-    try {
-      await mapEngine.setProvider(select.value);
-      localStorage.setItem("parking_map_provider", select.value);
-      if (onChange) onChange(select.value, mapEngine);
-    } catch (error) {
-      alert(error.message);
-      select.value = initial;
-    }
-  });
-
-  container.innerHTML = "";
-  container.appendChild(select);
-  return { select, initial };
 }
 
 async function loadMapConfig() {

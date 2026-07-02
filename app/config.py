@@ -10,8 +10,9 @@ class Settings(BaseSettings):
     admin_password: str = "admin123"
     parking_timer_minutes: int = 15
     notification_interval_minutes: int = 5
+    notification_interval_seconds: int = 300
     stop_detection_seconds: int = 120
-    movement_radius_meters: float = 30.0
+    movement_radius_meters: float = 15.0
     city_center_lat: float = 59.9343
     city_center_lng: float = 30.3351
     city_default_zoom: int = 12
