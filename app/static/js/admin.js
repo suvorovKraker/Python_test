@@ -6,6 +6,7 @@ let mapInitialized = false;
 let pendingZoneName = null;
 let pendingGeojson = null;
 let zonesFolder = "active";
+let zoneListQuery = "";
 let allZones = [];
 
 function requireAdmin() {
@@ -36,12 +37,48 @@ function setupTabs() {
 
 function setupZoneFolders() {
   document.querySelectorAll(".zones-tab").forEach((btn) => {
-    btn.addEventListener("click", () => {
-      zonesFolder = btn.dataset.folder;
-      document.querySelectorAll(".zones-tab").forEach((b) => b.classList.toggle("active", b === btn));
-      renderZonesList();
-    });
+    btn.addEventListener("click", () => switchZonesFolder(btn.dataset.folder));
   });
+}
+
+function switchZonesFolder(folder) {
+  zonesFolder = folder;
+  document.querySelectorAll(".zones-tab").forEach((b) => {
+    b.classList.toggle("active", b.dataset.folder === folder);
+  });
+  renderZonesList();
+}
+
+function setupZoneListSearch() {
+  document.getElementById("zones-filter")?.addEventListener("input", (e) => {
+    zoneListQuery = e.target.value.trim().toLowerCase();
+    renderZonesList();
+  });
+}
+
+function highlightZoneInSidebar(zoneId) {
+  const card = document.querySelector(`.zone-card[data-id="${zoneId}"]`);
+  if (!card) return;
+  card.scrollIntoView({ behavior: "smooth", block: "nearest" });
+  card.classList.remove("zone-flash");
+  void card.offsetWidth;
+  card.classList.add("zone-flash");
+  setTimeout(() => card.classList.remove("zone-flash"), 500);
+}
+
+function onMapZoneClick(zoneId) {
+  const zone = allZones.find((z) => z.id === zoneId);
+  if (!zone) return;
+  zoneListQuery = "";
+  const filterInput = document.getElementById("zones-filter");
+  if (filterInput) filterInput.value = "";
+  const folder = zone.is_active ? "active" : "disabled";
+  if (zonesFolder !== folder) switchZonesFolder(folder);
+  requestAnimationFrame(() => highlightZoneInSidebar(zoneId));
+}
+
+function focusZoneFromSidebar(zoneId) {
+  mapEngine?.focusZone(zoneId);
 }
 
 function setupDrawToolbar() {
@@ -58,7 +95,7 @@ function setupDrawToolbar() {
 async function ensureMap() {
   if (mapInitialized) return;
   const mapKeys = await loadMapConfig();
-  mapEngine = new MapEngine("map", center, zoom, mapKeys);
+  mapEngine = new MapEngine("map", center, zoom, mapKeys, { needDrawingPackage: true });
   await mapEngine.init();
   mapEngine.enableDrawing();
   mapEngine.onDrawCreated = () => {
@@ -159,22 +196,31 @@ async function loadUsers() {
 
 async function loadZones() {
   allZones = await api("/api/admin/zones");
-  mapEngine?.renderZones(allZones.filter((z) => z.is_active));
+  mapEngine?.renderZones(allZones, onMapZoneClick);
   renderZonesList();
 }
 
 function renderZonesList() {
   const list = document.getElementById("zones-list");
   if (!list) return;
-  const filtered = allZones.filter((z) => zonesFolder === "active" ? z.is_active : !z.is_active);
+  const filtered = allZones.filter((z) => {
+    const inFolder = zonesFolder === "active" ? z.is_active : !z.is_active;
+    if (!inFolder) return false;
+    if (!zoneListQuery) return true;
+    return z.name.toLowerCase().includes(zoneListQuery);
+  });
   list.innerHTML = filtered.map((z) => `
-    <li class="zone-card ${z.is_active ? "zone-active" : "zone-disabled"}">
-      <span class="zone-name">${z.name}</span>
+    <li class="zone-card ${z.is_active ? "zone-active" : "zone-disabled"}" data-id="${z.id}">
+      <button type="button" class="zone-name" data-id="${z.id}" title="Показать на карте">${z.name}</button>
       <div class="zone-actions">
         <button type="button" class="secondary-btn zone-toggle" data-id="${z.id}">${z.is_active ? "Выкл" : "Вкл"}</button>
         ${!z.is_active ? `<button type="button" class="zone-delete-btn" data-id="${z.id}" title="Удалить">🗑</button>` : ""}
       </div>
-    </li>`).join("") || "<li class='muted zone-card'>Пусто</li>";
+    </li>`).join("") || `<li class="muted zone-card">${zoneListQuery ? "Ничего не найдено" : "Пусто"}</li>`;
+
+  list.querySelectorAll(".zone-name").forEach((btn) => {
+    btn.addEventListener("click", () => focusZoneFromSidebar(Number(btn.dataset.id)));
+  });
 
   list.querySelectorAll(".zone-toggle").forEach((btn) => {
     btn.addEventListener("click", async () => {
@@ -324,6 +370,7 @@ async function init() {
   if (!requireAdmin()) return;
   setupTabs();
   setupZoneFolders();
+  setupZoneListSearch();
   setupStreetSearch();
   setupDrawToolbar();
   document.getElementById("clear-polygon")?.addEventListener("click", () => {

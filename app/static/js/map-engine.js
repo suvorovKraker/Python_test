@@ -1,20 +1,131 @@
-function loadScript(src) {
+function buildYandexScriptUrl(withFullPackage = false) {
+  const params = new URLSearchParams({ lang: "ru_RU" });
+  if (withFullPackage) params.set("load", "package.full");
+  return `/api/maps/yandex.js?${params}`;
+}
+
+function removeYandexScripts() {
+  document.querySelectorAll('script[src*="api-maps.yandex.ru"], script[src*="/api/maps/yandex.js"]').forEach((node) => node.remove());
+}
+
+function loadScript(src, timeoutMs = 45000) {
   return new Promise((resolve, reject) => {
     const existing = document.querySelector(`script[src="${src}"]`);
     if (existing) {
-      if (existing.dataset.loaded === "1") resolve();
-      else existing.addEventListener("load", () => resolve());
+      if (existing.dataset.loaded === "1") {
+        resolve();
+        return;
+      }
+      existing.addEventListener("load", () => resolve());
+      existing.addEventListener("error", () => reject(new Error(`Не удалось загрузить: ${src}`)));
       return;
     }
+
     const script = document.createElement("script");
     script.src = src;
+    script.async = true;
+    script.defer = true;
+    const timer = setTimeout(() => {
+      script.remove();
+      reject(new Error("Таймаут загрузки Яндекс.Карт. Проверьте интернет и настройки API-ключа."));
+    }, timeoutMs);
+
     script.onload = () => {
+      clearTimeout(timer);
       script.dataset.loaded = "1";
       resolve();
     };
-    script.onerror = () => reject(new Error(`Не удалось загрузить: ${src}`));
+    script.onerror = () => {
+      clearTimeout(timer);
+      script.remove();
+      const hint = src.includes("/api/maps/")
+        ? "Не удалось загрузить карту с сервера. Убедитесь, что python run.py запущен на Mac и телефон в той же Wi‑Fi."
+        : `Не удалось загрузить: ${src}`;
+      reject(new Error(hint));
+    };
     document.head.appendChild(script);
   });
+}
+
+function yandexHasPolygonEditor() {
+  try {
+    const test = new ymaps.Polygon([[]]);
+    return Boolean(test.editor?.startDrawing);
+  } catch {
+    return false;
+  }
+}
+
+async function loadYandexApi(needDrawingPackage = false) {
+  if (window.__yandexLoadPromise) {
+    await window.__yandexLoadPromise;
+    return yandexHasPolygonEditor();
+  }
+
+  if (window.ymaps) {
+    await new Promise((resolve) => ymaps.ready(resolve));
+    if (!needDrawingPackage || yandexHasPolygonEditor()) {
+      return yandexHasPolygonEditor();
+    }
+    removeYandexScripts();
+    delete window.ymaps;
+    delete window.__yandexPackageFull;
+  }
+
+  const attempts = needDrawingPackage
+    ? [
+        { url: buildYandexScriptUrl(false), full: false },
+        { url: buildYandexScriptUrl(true), full: true },
+      ]
+    : [{ url: buildYandexScriptUrl(false), full: false }];
+
+  window.__yandexLoadPromise = (async () => {
+    let lastError = null;
+    let hadBasic = false;
+
+    for (const attempt of attempts) {
+      try {
+        if (window.ymaps && attempt.full) {
+          removeYandexScripts();
+          delete window.ymaps;
+        }
+        await loadScript(attempt.url);
+        await new Promise((resolve) => ymaps.ready(resolve));
+        window.__yandexPackageFull = attempt.full;
+
+        if (needDrawingPackage && !attempt.full && !yandexHasPolygonEditor()) {
+          hadBasic = true;
+          continue;
+        }
+        return;
+      } catch (error) {
+        lastError = error;
+        removeYandexScripts();
+        delete window.ymaps;
+        if (hadBasic && attempt.full) {
+          try {
+            await loadScript(buildYandexScriptUrl(false));
+            await new Promise((resolve) => ymaps.ready(resolve));
+            window.__yandexPackageFull = false;
+            return;
+          } catch (fallbackError) {
+            lastError = fallbackError;
+          }
+        }
+      }
+    }
+
+    throw lastError || new Error(
+      "Не удалось загрузить Яндекс.Карты. Проверьте YANDEX_MAPS_API_KEY в .env и настройки ключа на developer.tech.yandex.ru.",
+    );
+  })();
+
+  try {
+    await window.__yandexLoadPromise;
+    return yandexHasPolygonEditor();
+  } finally {
+    window.__yandexLoadPromise = null;
+  }
 }
 
 function geoJsonToYandexCoords(geojson) {
@@ -31,11 +142,12 @@ function geoJsonToYandexCoords(geojson) {
 const PICK_COLORS = ["#f59e0b", "#8b5cf6", "#06b6d4", "#ec4899", "#84cc16", "#f97316"];
 
 class MapEngine {
-  constructor(containerId, center, zoom, mapKeys = {}) {
+  constructor(containerId, center, zoom, mapKeys = {}, options = {}) {
     this.containerId = containerId;
     this.center = center;
     this.zoom = zoom;
     this.mapKeys = mapKeys;
+    this.needDrawingPackage = Boolean(options.needDrawingPackage);
     this.engine = "yandex";
     this.map = null;
     this.zoneObjects = [];
@@ -47,6 +159,8 @@ class MapEngine {
     this._drawingActive = false;
     this._zoneBackup = null;
     this._userPos = null;
+    this.onZoneClick = null;
+    this._userMarkerInitialized = false;
   }
 
   async init() {
@@ -60,7 +174,7 @@ class MapEngine {
   async _initYandex() {
     const key = this.mapKeys.yandex_api_key;
     if (!key) throw new Error("Нет ключа Яндекс.Карт в .env (YANDEX_MAPS_API_KEY)");
-    await loadScript(`https://api-maps.yandex.ru/2.1/?apikey=${encodeURIComponent(key)}&lang=ru_RU&load=package.full`);
+    this._yandexHasEditor = await loadYandexApi(this.needDrawingPackage);
     await new Promise((resolve) => ymaps.ready(resolve));
     this.engine = "yandex";
     this.map = new ymaps.Map(this.containerId, {
@@ -84,35 +198,64 @@ class MapEngine {
     }
   }
 
-  renderZones(zones) {
+  renderZones(zones, onZoneClick = null) {
     this._zoneBackup = zones;
+    this.onZoneClick = onZoneClick;
     this.clearZones();
     zones.forEach((zone) => {
       const geo = typeof zone.polygon_geojson === "string"
         ? JSON.parse(zone.polygon_geojson)
         : zone.polygon_geojson;
-      this.addZone(geo, zone.name, zone.is_active !== false);
+      this.addZone(geo, zone.name, zone.is_active !== false, zone.id);
     });
   }
 
   clearZones() {
     if (!this.map) return;
-    this.zoneObjects.forEach((obj) => this.map.geoObjects.remove(obj));
+    this.zoneObjects.forEach((entry) => this.map.geoObjects.remove(entry.polygon));
     this.zoneObjects = [];
   }
 
-  addZone(geojson, name = "", active = true) {
+  addZone(geojson, name = "", active = true, zoneId = null) {
     if (!this.map) return;
-    const color = active ? "#ef4444" : "#3b82f6";
-    const fill = active ? "#ef444466" : "#3b82f688";
+    const color = active ? "#22c55e" : "#ef4444";
+    const fill = active ? "#22c55e66" : "#ef444466";
     const coords = geoJsonToYandexCoords(geojson);
     const polygon = new ymaps.Polygon(coords, { hintContent: name, balloonContent: name }, {
       fillColor: fill,
       strokeColor: color,
       strokeWidth: 2,
     });
+    if (zoneId != null) {
+      polygon.events.add("click", () => {
+        if (this.onZoneClick) this.onZoneClick(zoneId);
+      });
+    }
     this.map.geoObjects.add(polygon);
-    this.zoneObjects.push(polygon);
+    this.zoneObjects.push({ polygon, zoneId, geojson, active, name, color });
+  }
+
+  focusZone(zoneId) {
+    const entry = this.zoneObjects.find((z) => z.zoneId === zoneId);
+    if (!entry || !this.map) return;
+    const coords = geoJsonToYandexCoords(entry.geojson);
+    if (coords.length) {
+      const bounds = ymaps.util.bounds.fromPoints(coords[0]);
+      this.map.setBounds(bounds, { checkZoomRange: true, zoomMargin: 50 });
+    }
+    this._pulseZone(entry);
+  }
+
+  _pulseZone(entry) {
+    const { polygon, color } = entry;
+    polygon.options.set("strokeWidth", 5);
+    polygon.options.set("strokeColor", "#fbbf24");
+    polygon.options.set("fillColor", `${color}aa`);
+    setTimeout(() => {
+      polygon.options.set("strokeWidth", 2);
+      polygon.options.set("strokeColor", color);
+      polygon.options.set("fillColor", entry.active ? "#22c55e66" : "#ef444466");
+    }, 500);
   }
 
   clearPickableCandidates() {
@@ -164,15 +307,24 @@ class MapEngine {
     }
   }
 
-  setUserMarker(lat, lng) {
+  setUserMarker(lat, lng, options = {}) {
+    const { centerMap = false } = options;
     this._userPos = { lat, lng };
     if (!this.map) return;
-    if (this.userMarker) this.map.geoObjects.remove(this.userMarker);
-    this.userMarker = new ymaps.Placemark([lat, lng], { iconContent: "Вы" }, {
-      preset: "islands#blueCircleDotIcon",
-    });
-    this.map.geoObjects.add(this.userMarker);
-    this.map.setCenter([lat, lng], 16);
+
+    if (this.userMarker) {
+      this.userMarker.geometry.setCoordinates([lat, lng]);
+    } else {
+      this.userMarker = new ymaps.Placemark([lat, lng], { iconContent: "Вы" }, {
+        preset: "islands#blueCircleDotIcon",
+      });
+      this.map.geoObjects.add(this.userMarker);
+    }
+
+    if (centerMap || !this._userMarkerInitialized) {
+      this.map.setCenter([lat, lng], Math.max(this.map.getZoom(), 16));
+      this._userMarkerInitialized = true;
+    }
   }
 
   fitGeoJson(geojson) {
@@ -224,6 +376,10 @@ class MapEngine {
 
   _startYandexDrawing() {
     if (!this.map) return false;
+    if (!this._yandexHasEditor) {
+      alert("Рисование на карте недоступно: не загрузился модуль редактора. Откройте админку с Mac или добавьте IP телефона в настройках ключа Яндекс.");
+      return false;
+    }
     this.clearPickableCandidates();
     this._stopDrawing();
     this.yandexDrawPolygon = new ymaps.Polygon([[]], {}, {

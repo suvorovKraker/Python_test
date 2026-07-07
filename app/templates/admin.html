@@ -42,6 +42,7 @@
       <div id="map" class="map map-tall"></div>
     </div>
     <aside class="zones-sidebar">
+      <input type="search" id="zones-filter" class="zones-filter" placeholder="🔍 Поиск зоны…" autocomplete="off">
       <div class="zones-tabs">
         <button type="button" class="zones-tab active" data-folder="active">Включённые</button>
         <button type="button" class="zones-tab" data-folder="disabled">Выключенные</button>
@@ -103,7 +104,7 @@
 
 {% block scripts %}
 <script>window.ADMIN_CONFIG = { center: [{{ city_center_lat }}, {{ city_center_lng }}], zoom: {{ city_zoom }} };</script>
-<script src="/static/js/map-engine.js"></script>
+<script src="/static/js/map-engine.js?v=3"></script>
 <script src="/static/js/geo.js"></script>
 <script src="/static/js/admin.js"></script>
 <script>setupCollapsibleNav("admin-nav");</script>

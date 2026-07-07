@@ -435,12 +435,15 @@ button {
   background: #111827;
 }
 .zone-card.zone-active {
+  border-color: var(--ok);
+  background: rgba(34, 197, 94, 0.08);
+  box-shadow: 0 0 0 1px rgba(34, 197, 94, 0.25);
+}
+.zone-card.zone-disabled {
   border-color: #ef4444;
   background: rgba(239, 68, 68, 0.08);
-  box-shadow: 0 0 0 1px rgba(239, 68, 68, 0.25);
+  opacity: 0.9;
 }
-.zone-card.zone-disabled { border-color: #4b5563; opacity: 0.85; }
-.zone-name { font-weight: 600; word-break: break-word; }
 .zone-actions { display: flex; gap: 6px; align-items: center; }
 .zone-delete-btn {
   background: transparent;
@@ -465,6 +468,36 @@ button {
 }
 .draw-btn { padding: 8px 14px; font-size: 13px; }
 .draw-hint-text { font-size: 13px; margin: 0 0 8px; }
+
+.zone-name {
+  font-weight: 600;
+  word-break: break-word;
+  text-align: left;
+  background: none;
+  border: none;
+  color: inherit;
+  font: inherit;
+  padding: 0;
+  cursor: pointer;
+}
+.zone-name:hover { color: var(--accent); text-decoration: underline; }
+
+.zones-filter {
+  width: 100%;
+  padding: 8px 10px;
+  margin-bottom: 8px;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  background: #111827;
+  color: var(--text);
+  font-size: 13px;
+}
+
+@keyframes zoneFlash {
+  0%, 100% { box-shadow: 0 0 0 0 transparent; }
+  50% { box-shadow: 0 0 0 2px var(--accent-gold), 0 0 14px rgba(212, 175, 55, 0.45); }
+}
+.zone-card.zone-flash { animation: zoneFlash 0.5s ease; }
 
 .map-toolbar { display: flex; flex-wrap: wrap; gap: 8px; align-items: flex-start; margin-bottom: 8px; }
 .street-search-inline { position: relative; flex: 1; min-width: 180px; }

@@ -17,12 +17,19 @@ function setGeoStatus(state, detail = "") {
   if (retryBtn) retryBtn.classList.toggle("hidden", state === "ok");
 }
 
+const GEO_FOREGROUND = { enableHighAccuracy: true, maximumAge: 1000, timeout: 15000 };
+const GEO_BACKGROUND = { enableHighAccuracy: true, maximumAge: 8000, timeout: 15000 };
+const BACKGROUND_INTERVAL_MS = 8000;
+
 let lastPositions = [];
 let geoWatchId = null;
-let geoOnPosition = null;
+let userOnPosition = null;
 let geoOnError = null;
 let geoRetryInterval = null;
 let geoRetryTimeout = null;
+let bgIntervalId = null;
+let visibilityBound = false;
+let firstFixReceived = false;
 
 function trackGeoQuality(lat, lng) {
   const now = Date.now();
@@ -45,19 +52,52 @@ function stopGeolocation() {
   }
 }
 
-function clearGeoRetryTimers() {
-  if (geoRetryInterval) {
-    clearInterval(geoRetryInterval);
-    geoRetryInterval = null;
-  }
-  if (geoRetryTimeout) {
-    clearTimeout(geoRetryTimeout);
-    geoRetryTimeout = null;
+function stopBackgroundGeolocation() {
+  if (bgIntervalId !== null) {
+    clearInterval(bgIntervalId);
+    bgIntervalId = null;
   }
 }
 
+function clearGeoRetryTimers() {
+  if (geoRetryInterval) { clearInterval(geoRetryInterval); geoRetryInterval = null; }
+  if (geoRetryTimeout) { clearTimeout(geoRetryTimeout); geoRetryTimeout = null; }
+}
+
+function handlePosition(position) {
+  trackGeoQuality(position.coords.latitude, position.coords.longitude);
+  if (userOnPosition) userOnPosition(position);
+  setGeoStatus("ok");
+}
+
+function startForegroundGeolocation(onFail) {
+  stopBackgroundGeolocation();
+  stopGeolocation();
+  navigator.geolocation.getCurrentPosition(handlePosition, onFail, GEO_FOREGROUND);
+  geoWatchId = navigator.geolocation.watchPosition(handlePosition, onFail, GEO_FOREGROUND);
+}
+
+function startBackgroundGeolocation(onFail) {
+  stopGeolocation();
+  const tick = () => navigator.geolocation.getCurrentPosition(handlePosition, onFail, GEO_BACKGROUND);
+  tick();
+  bgIntervalId = setInterval(tick, BACKGROUND_INTERVAL_MS);
+  setGeoStatus("warn", "фоновый режим ~8 с");
+}
+
+function bindVisibilityHandling() {
+  if (visibilityBound) return;
+  visibilityBound = true;
+  document.addEventListener("visibilitychange", () => {
+    if (!userOnPosition) return;
+    const onFail = geoOnError || (() => {});
+    if (document.hidden) startBackgroundGeolocation(onFail);
+    else startForegroundGeolocation(onFail);
+  });
+}
+
 function startAutoGeolocation(onPosition, onError, options = {}) {
-  geoOnPosition = onPosition;
+  userOnPosition = onPosition;
   geoOnError = onError || (() => {});
   const withCountdown = !!options.withCountdown;
 
@@ -66,63 +106,61 @@ function startAutoGeolocation(onPosition, onError, options = {}) {
     return null;
   }
 
+  bindVisibilityHandling();
   if (!withCountdown) setGeoStatus("warn", "определяем...");
   lastPositions = [];
+  firstFixReceived = false;
 
-  let connected = false;
   const retryBtn = document.getElementById("geo-retry-btn");
   if (retryBtn) retryBtn.disabled = withCountdown;
 
-  const onSuccess = (position) => {
-    if (connected) return;
-    connected = true;
-    clearGeoRetryTimers();
-    if (retryBtn) retryBtn.disabled = false;
-    trackGeoQuality(position.coords.latitude, position.coords.longitude);
-    onPosition(position);
-    setGeoStatus("ok");
-  };
-
   const onFail = (error) => {
-    if (connected || withCountdown) return;
-    setGeoStatus("err", error.message);
-    onError(error);
+    if (!firstFixReceived) {
+      setGeoStatus("err", error.message);
+      geoOnError(error);
+    }
   };
 
-  stopGeolocation();
-  navigator.geolocation.getCurrentPosition(onSuccess, onFail, {
-    enableHighAccuracy: true,
-    timeout: withCountdown ? 10000 : 20000,
-    maximumAge: 0,
-  });
-  geoWatchId = navigator.geolocation.watchPosition(onSuccess, onFail, {
-    enableHighAccuracy: true,
-    maximumAge: 3000,
-    timeout: withCountdown ? 10000 : 20000,
-  });
+  const onPositionUpdate = (position) => {
+    if (!firstFixReceived) {
+      firstFixReceived = true;
+      clearGeoRetryTimers();
+      if (retryBtn) retryBtn.disabled = false;
+    }
+    handlePosition(position);
+  };
+
+  const wrappedFail = onFail;
+  const wrappedPosition = onPositionUpdate;
+
+  if (document.hidden) {
+    stopBackgroundGeolocation();
+    const tick = () => navigator.geolocation.getCurrentPosition(wrappedPosition, wrappedFail, GEO_BACKGROUND);
+    tick();
+    bgIntervalId = setInterval(tick, BACKGROUND_INTERVAL_MS);
+    setGeoStatus("warn", "фоновый режим ~8 с");
+  } else {
+    stopGeolocation();
+    stopBackgroundGeolocation();
+    navigator.geolocation.getCurrentPosition(wrappedPosition, wrappedFail, GEO_FOREGROUND);
+    geoWatchId = navigator.geolocation.watchPosition(wrappedPosition, wrappedFail, GEO_FOREGROUND);
+  }
 
   if (withCountdown) {
     let secondsLeft = 10;
     setGeoStatus("warn", `подключение… ${secondsLeft} с`);
     geoRetryInterval = setInterval(() => {
       secondsLeft -= 1;
-      if (connected) {
-        clearGeoRetryTimers();
-        return;
-      }
-      if (secondsLeft > 0) {
-        setGeoStatus("warn", `подключение… ${secondsLeft} с`);
-      }
+      if (firstFixReceived) { clearGeoRetryTimers(); return; }
+      if (secondsLeft > 0) setGeoStatus("warn", `подключение… ${secondsLeft} с`);
     }, 1000);
     geoRetryTimeout = setTimeout(() => {
       clearGeoRetryTimers();
-      if (!connected) {
+      if (!firstFixReceived) {
         stopGeolocation();
+        stopBackgroundGeolocation();
         setGeoStatus("err", "не удалось за 10 с");
-        if (retryBtn) {
-          retryBtn.disabled = false;
-          retryBtn.classList.remove("hidden");
-        }
+        if (retryBtn) { retryBtn.disabled = false; retryBtn.classList.remove("hidden"); }
       }
     }, 10000);
   }
@@ -131,7 +169,7 @@ function startAutoGeolocation(onPosition, onError, options = {}) {
 }
 
 function retryGeolocation() {
-  if (geoOnPosition) startAutoGeolocation(geoOnPosition, geoOnError, { withCountdown: true });
+  if (userOnPosition) startAutoGeolocation(userOnPosition, geoOnError, { withCountdown: true });
 }
 
 function setupGeoRetry() {

@@ -88,7 +88,8 @@ function onPosition(position) {
   lastLat = lat;
   lastLng = lng;
 
-  mapEngine.setUserMarker(lat, lng);
+  const isFirst = !mapEngine?._userMarkerInitialized;
+  mapEngine.setUserMarker(lat, lng, { centerMap: isFirst });
 
   if (!getToken()) return;
 

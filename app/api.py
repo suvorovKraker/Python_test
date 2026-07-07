@@ -1,6 +1,8 @@
 from datetime import datetime, timezone
 
+import httpx
 from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi.responses import Response
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
@@ -54,12 +56,43 @@ def network_info():
 
 @router.get("/map-config")
 def map_config():
+    ip = get_local_ip()
     return {
         "yandex_api_key": settings.yandex_maps_api_key,
         "dgis_api_key": settings.dgis_api_key,
         "yandex_docs": "https://developer.tech.yandex.ru/",
         "dgis_docs": "https://platform.2gis.ru/",
+        "phone_url": f"http://{ip}:8000",
     }
+
+
+@router.get("/maps/yandex.js")
+def yandex_maps_script(lang: str = "ru_RU", load: str | None = None):
+    """Прокси Яндекс.Карт: скрипт грузится с вашего сервера, а не с api-maps.yandex.ru."""
+    if not settings.yandex_maps_api_key:
+        raise HTTPException(status_code=503, detail="YANDEX_MAPS_API_KEY не задан в .env")
+    params: dict[str, str] = {"apikey": settings.yandex_maps_api_key, "lang": lang}
+    if load:
+        params["load"] = load
+    try:
+        with httpx.Client(timeout=30.0, follow_redirects=True) as client:
+            response = client.get(
+                "https://api-maps.yandex.ru/2.1/",
+                params=params,
+                headers={"User-Agent": "ParkingSPB/1.0"},
+            )
+    except httpx.RequestError as exc:
+        raise HTTPException(status_code=502, detail=f"Сервер не достучался до Яндекс.Карт: {exc}") from exc
+    if response.status_code != 200:
+        raise HTTPException(
+            status_code=502,
+            detail=f"Яндекс.Карты ответили {response.status_code}. Проверьте ключ на developer.tech.yandex.ru",
+        )
+    return Response(
+        content=response.text,
+        media_type="application/javascript",
+        headers={"Cache-Control": "public, max-age=1800"},
+    )
 
 
 @router.get("/settings", response_model=AppSettingsOut)
